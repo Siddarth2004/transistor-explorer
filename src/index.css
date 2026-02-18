@@ -293,19 +293,20 @@ sup { font-size: 0.65em; color: var(--gold); vertical-align: super; margin-left:
   pointer-events: none;
 }
 
+@keyframes drawCurve {
+  from { stroke-dashoffset: 1; }
+  to   { stroke-dashoffset: 0; }
+}
+
 .journey-route-progress {
   fill: none;
   stroke: #2f6fbf;
   stroke-width: 2.7;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.journey-note-link {
-  stroke: #2f6fbf;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  opacity: 0.9;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: drawCurve 1.0s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
 .journey-map-canvas {

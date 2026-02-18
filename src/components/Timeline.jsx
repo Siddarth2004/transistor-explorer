@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 const START_YEAR = 1947
 const MONTHLY_UNTIL_YEAR = 1979
 const END_YEAR = 2026
-const PLAYBACK_STEP_MS = 900
+const PLAYBACK_STEP_MS = 350
 const NOTE_VISIBLE_MS = 6000
 const NOTE_WIDTH = 236
 const NOTE_HEIGHT = 44
@@ -28,7 +28,7 @@ const EVENTS = [
     lat: 40.6843,
     lon: -74.4019,
     zoom: 6,
-    trigger: { year: 1947, month: 11 },
+    trigger: { year: 1947, month: 10 },
     popupHtml: `
       <div style="width:232px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: #0f172a; line-height: 1.38;">
         <img
@@ -117,37 +117,12 @@ function curvePath(start, end) {
   return `M ${start.x} ${start.y} C ${c1x} ${c1y} ${c2x} ${c2y} ${end.x} ${end.y}`
 }
 
-function markerStyle(eventId, activeEventId, secondVisible) {
-  if (eventId === 'bell') {
-    return {
-      radius: 8,
-      color: ACCENT_COLOR,
-      weight: 2,
-      fillColor: ACCENT_COLOR,
-      fillOpacity: 0.95,
-      opacity: 1,
-    }
-  }
+const MARKER_VISIBLE = { radius: 8, color: ACCENT_COLOR, weight: 2, fillColor: ACCENT_COLOR, fillOpacity: 0.95, opacity: 1 }
+const MARKER_HIDDEN  = { radius: 0.1, color: ACCENT_COLOR, weight: 0, fillColor: ACCENT_COLOR, fillOpacity: 0, opacity: 0 }
 
-  if (!secondVisible) {
-    return {
-      radius: 0.1,
-      color: ACCENT_COLOR,
-      weight: 0,
-      fillColor: ACCENT_COLOR,
-      fillOpacity: 0,
-      opacity: 0,
-    }
-  }
-
-  return {
-    radius: 8,
-    color: ACCENT_COLOR,
-    weight: 2,
-    fillColor: ACCENT_COLOR,
-    fillOpacity: 0.95,
-    opacity: 1,
-  }
+function markerStyle(eventId, firstVisible, secondVisible) {
+  if (eventId === 'bell') return firstVisible ? MARKER_VISIBLE : MARKER_HIDDEN
+  return secondVisible ? MARKER_VISIBLE : MARKER_HIDDEN
 }
 
 function ensureLeafletLoaded() {
@@ -204,11 +179,12 @@ function ensureLeafletLoaded() {
 }
 
 export default function Timeline() {
-  const [pointIndex, setPointIndex] = useState(BELL_POINT_INDEX)
+  const [pointIndex, setPointIndex] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [mapError, setMapError] = useState('')
   const [mapReady, setMapReady] = useState(false)
   const [routePathD, setRoutePathD] = useState('')
+  const [curveVisible, setCurveVisible] = useState(false)
   const [noteState, setNoteState] = useState({
     visible: false,
     text: '',
@@ -225,17 +201,18 @@ export default function Timeline() {
   const mapRef = useRef(null)
   const markersRef = useRef({})
   const hideNoteTimerRef = useRef(null)
+  const curveTimerRef = useRef(null)
   const prevActiveEventRef = useRef(null)
+  const prevRouteActiveRef = useRef(false)
+  const hasZoomedOutRef = useRef(false)
 
   const currentPoint = TIME_POINTS[pointIndex]
   const activeEventIndex = pointIndex >= SHOCKLEY_POINT_INDEX ? 1 : 0
   const activeEvent = EVENTS[activeEventIndex]
-  const routeProgress = useMemo(() => {
-    const raw = (pointIndex - BELL_POINT_INDEX) / (SHOCKLEY_POINT_INDEX - BELL_POINT_INDEX)
-    return clamp(raw, 0, 1)
-  }, [pointIndex])
-
-  const secondDotVisible = routeProgress >= 0.999
+  // Driven purely by event trigger indices — no hardcoded thresholds
+  const firstDotVisible  = pointIndex >= BELL_POINT_INDEX
+  const routeActive      = pointIndex > BELL_POINT_INDEX
+  const secondDotVisible = pointIndex >= SHOCKLEY_POINT_INDEX
 
   const computeNoteGeometry = useCallback((event) => {
     const map = mapRef.current
@@ -332,7 +309,7 @@ export default function Timeline() {
         const markers = {}
 
         EVENTS.forEach((event) => {
-          const marker = L.circleMarker([event.lat, event.lon], markerStyle(event.id, activeEvent.id, secondDotVisible))
+          const marker = L.circleMarker([event.lat, event.lon], markerStyle(event.id, firstDotVisible, secondDotVisible))
             .addTo(map)
             .bindPopup(event.popupHtml, {
               minWidth: 232,
@@ -354,17 +331,17 @@ export default function Timeline() {
         const onResize = () => map.invalidateSize()
         const onMapMove = () => updateRouteGeometry()
 
-        map.on('move zoom resize', onMapMove)
+        // Include moveend + zoomend so path recalculates after animations settle
+        map.on('move zoom resize moveend zoomend', onMapMove)
         window.addEventListener('resize', onResize)
         window.addEventListener('resize', onMapMove)
         window.setTimeout(() => {
           map.invalidateSize()
           updateRouteGeometry()
-          showTransientNote(EVENTS[0])
         }, 160)
 
         map.__cleanup = () => {
-          map.off('move zoom resize', onMapMove)
+          map.off('move zoom resize moveend zoomend', onMapMove)
           window.removeEventListener('resize', onResize)
           window.removeEventListener('resize', onMapMove)
         }
@@ -384,6 +361,7 @@ export default function Timeline() {
         map.remove()
       }
       if (hideNoteTimerRef.current) window.clearTimeout(hideNoteTimerRef.current)
+      if (curveTimerRef.current) window.clearTimeout(curveTimerRef.current)
       mapRef.current = null
       markersRef.current = {}
       setMapReady(false)
@@ -396,47 +374,58 @@ export default function Timeline() {
     const map = mapRef.current
     if (!map) return
 
-    const routeStarted = routeProgress > 0.001
+    // Only act on boolean transitions — never spam flyTo/fitBounds every tick
+    const wasActive = prevRouteActiveRef.current
+    prevRouteActiveRef.current = routeActive
 
-    if (!routeStarted) {
+    if (!routeActive && wasActive) {
+      // Scrubbed back — hide curve, cancel pending timer, fly back
+      if (curveTimerRef.current) window.clearTimeout(curveTimerRef.current)
+      setCurveVisible(false)
+      hasZoomedOutRef.current = false
       map.flyTo([EVENTS[0].lat, EVENTS[0].lon], EVENTS[0].zoom, {
-        duration: 0.75,
-        easeLinearity: 0.2,
+        duration: 0.9,
+        easeLinearity: 0.25,
         animate: true,
       })
-    } else {
+    } else if (routeActive && !wasActive && !hasZoomedOutRef.current) {
+      // Route just activated — zoom out, then draw curve only after map settles
+      hasZoomedOutRef.current = true
       map.fitBounds(
         [
           [EVENTS[0].lat, EVENTS[0].lon],
           [EVENTS[1].lat, EVENTS[1].lon],
         ],
-        {
-          padding: [70, 110],
-          maxZoom: 5.7,
-          animate: true,
-          duration: 0.75,
-        }
+        { padding: [80, 120], maxZoom: 5.5, animate: true, duration: 1.1 }
       )
+      // Wait for fitBounds to finish (~1.2 s), then force a fresh geometry
+      // calculation before making the curve visible — guarantees the path
+      // endpoints are at the settled zoomed-out positions, not the old ones.
+      if (curveTimerRef.current) window.clearTimeout(curveTimerRef.current)
+      curveTimerRef.current = window.setTimeout(() => {
+        updateRouteGeometry()
+        setCurveVisible(true)
+      }, 1250)
     }
 
     if (prevActiveEventRef.current !== activeEvent.id) {
       prevActiveEventRef.current = activeEvent.id
       showTransientNote(activeEvent)
     }
-  }, [activeEvent, mapReady, routeProgress, showTransientNote])
+  }, [activeEvent, mapReady, routeActive, showTransientNote, updateRouteGeometry])
 
   useEffect(() => {
     const bellMarker = markersRef.current.bell
     const shockleyMarker = markersRef.current['shockley-hotel']
 
     if (bellMarker) {
-      bellMarker.setStyle(markerStyle('bell', activeEvent.id, secondDotVisible))
+      bellMarker.setStyle(markerStyle('bell', firstDotVisible, secondDotVisible))
     }
 
     if (shockleyMarker) {
-      shockleyMarker.setStyle(markerStyle('shockley-hotel', activeEvent.id, secondDotVisible))
+      shockleyMarker.setStyle(markerStyle('shockley-hotel', firstDotVisible, secondDotVisible))
     }
-  }, [activeEvent.id, secondDotVisible])
+  }, [activeEvent.id, firstDotVisible, secondDotVisible])
 
   useEffect(() => {
     if (!isPlaying) return undefined
@@ -468,24 +457,12 @@ export default function Timeline() {
               <div className="journey-map-year">{currentPoint.label}</div>
 
               <svg className="journey-map-overlay" aria-hidden="true">
-                {routePathD && routeProgress > 0.001 && (
-                  <>
-                    <path
-                      d={routePathD}
-                      className="journey-route-progress"
-                      pathLength="1"
-                      style={{ strokeDasharray: 1, strokeDashoffset: 1 - routeProgress }}
-                    />
-                  </>
-                )}
-
-                {noteState.visible && (
-                  <line
-                    x1={noteState.x1}
-                    y1={noteState.y1}
-                    x2={noteState.x2}
-                    y2={noteState.y2}
-                    className="journey-note-link"
+                {routePathD && curveVisible && (
+                  <path
+                    d={routePathD}
+                    fill="none"
+                    className="journey-route-progress"
+                    pathLength="1"
                   />
                 )}
               </svg>
@@ -516,7 +493,7 @@ export default function Timeline() {
                 className={`journey-play-btn ${isPlaying ? 'playing' : ''}`}
                 onClick={() => {
                   if (pointIndex >= LAST_POINT_INDEX) {
-                    setPointIndex(BELL_POINT_INDEX)
+                    setPointIndex(0)
                     setIsPlaying(true)
                     return
                   }
