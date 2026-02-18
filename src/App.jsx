@@ -1,4 +1,3 @@
-import Nav from './components/Nav.jsx'
 import Hero from './components/Hero.jsx'
 import Timeline from './components/Timeline.jsx'
 import Fabrication from './components/Fabrication.jsx'
@@ -7,7 +6,6 @@ import References from './components/References.jsx'
 export default function App() {
   return (
     <>
-      <Nav />
       <main>
         <Hero />
         <Timeline />

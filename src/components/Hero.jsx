@@ -44,11 +44,11 @@ export default function Hero() {
     ptGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3))
 
     const ptMat = new THREE.PointsMaterial({
-      color: 0x818cf8,
-      size: 0.07,
+      color: 0x1d4ed8,
+      size: 0.075,
       sizeAttenuation: true,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.8,
     })
     scene.add(new THREE.Points(ptGeo, ptMat))
 
@@ -58,9 +58,9 @@ export default function Hero() {
     lineGeo.setAttribute('position', new THREE.BufferAttribute(linePos, 3))
 
     const lineMat = new THREE.LineBasicMaterial({
-      color: 0x4f46e5,
+      color: 0x0369a1,
       transparent: true,
-      opacity: 0.22,
+      opacity: 0.25,
     })
     const lineSegs = new THREE.LineSegments(lineGeo, lineMat)
     scene.add(lineSegs)
@@ -148,26 +148,21 @@ export default function Hero() {
         style={{
           position: 'absolute',
           inset: 0,
-          background: 'radial-gradient(ellipse 70% 60% at 50% 50%, transparent 20%, #07070f 100%)',
+          background:
+            'radial-gradient(ellipse 74% 64% at 50% 50%, rgba(210,227,252,0) 24%, rgba(241,248,255,1) 100%)',
           pointerEvents: 'none',
           zIndex: 1,
         }}
       />
 
       <div className="hero-content">
+        <p className="hero-kicker">The transistor</p>
         <h1 className="hero-title">
           The invention that{' '}
           <span className="hero-accent">changes everything</span>
           <br />
-          every&thinsp;single&thinsp;day.
+          <span className="hero-dayline">every single day</span>
         </h1>
-
-        <a href="#timeline" className="hero-cta">
-          Explore the history
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </a>
       </div>
 
       <div className="hero-scroll" aria-hidden="true">scroll to explore ↓</div>

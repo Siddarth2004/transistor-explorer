@@ -26,7 +26,7 @@ export const timelineEvents = [
     title: "The Bipolar Junction Transistor",
     subtitle: "William Shockley — Bell Labs, Murray Hill, NJ",
     description:
-      "Shockley led the Bell Labs research group and shared the 1956 Nobel Prize with Bardeen and Brattain, but the specific point-contact transistor was their experimental work. Driven to find a more manufacturable design, he independently conceived the bipolar junction transistor — three semiconductor layers where a small base current controls a much larger collector current. It was more reliable, easier to mass-produce, and became the dominant transistor of the 1950s and 60s.",
+      "Shockley led the Bell Labs research group and shared the 1956 Nobel Prize with Bardeen and Brattain, but the specific point-contact transistor was their experimental work. Soon after that result, he worked out the bipolar junction transistor concept while staying in a hotel room during a period of intense competition inside the group. The three-layer design was more reliable, easier to mass-produce, and became the dominant transistor of the 1950s and 60s.",
     impact:
       "All three — Bardeen, Brattain, and Shockley — shared the 1956 Nobel Prize in Physics for their transistor research.",
     refs: [3],
