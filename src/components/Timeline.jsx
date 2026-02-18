@@ -1,8 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-const YEAR_MIN = 1950
-const YEAR_MAX = 2026
-const PLAYBACK_STEP_MS = 220
+const START_YEAR = 1947
+const MONTHLY_UNTIL_YEAR = 1979
+const END_YEAR = 2026
+const PLAYBACK_STEP_MS = 900
+const NOTE_VISIBLE_MS = 6000
+const NOTE_WIDTH = 236
+const NOTE_HEIGHT = 44
+const ACCENT_COLOR = '#2f6fbf'
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 const LEAFLET_CSS_ID = 'leaflet-cdn-css'
 const LEAFLET_JS_ID = 'leaflet-cdn-js'
@@ -14,33 +20,134 @@ const LEAFLET_JS_INTEGRITY = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo
 const MAP_BASE_TILE = 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png'
 const MAP_ATTRIBUTION = '&copy; OpenStreetMap contributors &copy; CARTO'
 
-const KEYFRAMES = [
-  { year: 1950, lat: 39.5, lon: -98.35, zoom: 4.2 },
-  { year: 1968, lat: 37.4, lon: -122.1, zoom: 5.8 },
-  { year: 1985, lat: 38.0, lon: -96.0, zoom: 3.7 },
-  { year: 2005, lat: 31.0, lon: 20.0, zoom: 2.6 },
-  { year: 2026, lat: 27.0, lon: 35.0, zoom: 2.3 },
+const EVENTS = [
+  {
+    id: 'bell',
+    title: 'Bell Labs, 1947',
+    shortNote: 'The first transistor is invented at Bell Labs.',
+    lat: 40.6843,
+    lon: -74.4019,
+    zoom: 6,
+    trigger: { year: 1947, month: 11 },
+    popupHtml: `
+      <div style="width:232px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: #0f172a; line-height: 1.38;">
+        <img
+          src="https://commons.wikimedia.org/wiki/Special:FilePath/Bardeen_Shockley_Brattain_1948.JPG"
+          alt="Bardeen, Shockley, and Brattain at Bell Labs"
+          style="display:block; width:100%; height:150px; object-fit:cover; border-radius:8px 8px 0 0;"
+        />
+        <div style="padding:8px 10px 10px;">
+          <div style="font-size: 12.2px; font-weight: 700; margin-bottom: 4px;">Bell Labs, 1947</div>
+          <div style="font-size: 11.8px;">
+            Shockley, Bardeen, and Brattain drove the early transistor breakthrough era that launched modern electronics.
+          </div>
+        </div>
+      </div>
+    `,
+  },
+  {
+    id: 'shockley-hotel',
+    title: 'Chicago Hotel Scene, 1948',
+    shortNote: 'Shockley sketches the junction-transistor concept during his Chicago hotel stay.',
+    lat: 41.8781,
+    lon: -87.6298,
+    zoom: 6,
+    trigger: { year: 1948, month: 5 },
+    popupHtml: `
+      <div style="width:232px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: #0f172a; line-height: 1.38;">
+        <img
+          src="https://commons.wikimedia.org/wiki/Special:FilePath/US2569347-drawings-page-1.png"
+          alt="Shockley junction-transistor patent figures"
+          style="display:block; width:100%; height:150px; object-fit:cover; border-radius:8px 8px 0 0;"
+        />
+        <div style="padding:8px 10px 10px;">
+          <div style="font-size: 12.2px; font-weight: 700; margin-bottom: 4px;">Chicago, 1948</div>
+          <div style="font-size: 11.8px;">
+            William Shockley develops the junction-transistor concept that made transistor manufacturing more practical at scale.
+          </div>
+        </div>
+      </div>
+    `,
+  },
 ]
 
-function interpolateView(year) {
-  if (year <= KEYFRAMES[0].year) return KEYFRAMES[0]
-  if (year >= KEYFRAMES[KEYFRAMES.length - 1].year) return KEYFRAMES[KEYFRAMES.length - 1]
+function buildTimePoints() {
+  const points = []
 
-  for (let i = 0; i < KEYFRAMES.length - 1; i += 1) {
-    const a = KEYFRAMES[i]
-    const b = KEYFRAMES[i + 1]
-    if (year >= a.year && year <= b.year) {
-      const t = (year - a.year) / (b.year - a.year)
-      return {
-        year,
-        lat: a.lat + (b.lat - a.lat) * t,
-        lon: a.lon + (b.lon - a.lon) * t,
-        zoom: a.zoom + (b.zoom - a.zoom) * t,
-      }
+  for (let year = START_YEAR; year <= MONTHLY_UNTIL_YEAR; year += 1) {
+    for (let month = 0; month < 12; month += 1) {
+      points.push({ year, month, label: `${MONTHS[month]} ${year}` })
     }
   }
 
-  return KEYFRAMES[0]
+  for (let year = MONTHLY_UNTIL_YEAR + 1; year <= END_YEAR; year += 1) {
+    points.push({ year, month: null, label: String(year) })
+  }
+
+  return points
+}
+
+const TIME_POINTS = buildTimePoints()
+const LAST_POINT_INDEX = TIME_POINTS.length - 1
+
+function findPointIndex(year, month) {
+  return TIME_POINTS.findIndex((point) => point.year === year && point.month === month)
+}
+
+const BELL_POINT_INDEX = findPointIndex(EVENTS[0].trigger.year, EVENTS[0].trigger.month)
+const SHOCKLEY_POINT_INDEX = findPointIndex(EVENTS[1].trigger.year, EVENTS[1].trigger.month)
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value))
+}
+
+function curvePath(start, end) {
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const dist = Math.hypot(dx, dy) || 1
+  const nx = -dy / dist
+  const ny = dx / dist
+  const lift = clamp(dist * 0.2, 36, 90)
+
+  const c1x = start.x + dx * 0.33 + nx * lift
+  const c1y = start.y + dy * 0.33 + ny * lift
+  const c2x = start.x + dx * 0.66 + nx * lift
+  const c2y = start.y + dy * 0.66 + ny * lift
+
+  return `M ${start.x} ${start.y} C ${c1x} ${c1y} ${c2x} ${c2y} ${end.x} ${end.y}`
+}
+
+function markerStyle(eventId, activeEventId, secondVisible) {
+  if (eventId === 'bell') {
+    return {
+      radius: 8,
+      color: ACCENT_COLOR,
+      weight: 2,
+      fillColor: ACCENT_COLOR,
+      fillOpacity: 0.95,
+      opacity: 1,
+    }
+  }
+
+  if (!secondVisible) {
+    return {
+      radius: 0.1,
+      color: ACCENT_COLOR,
+      weight: 0,
+      fillColor: ACCENT_COLOR,
+      fillOpacity: 0,
+      opacity: 0,
+    }
+  }
+
+  return {
+    radius: 8,
+    color: ACCENT_COLOR,
+    weight: 2,
+    fillColor: ACCENT_COLOR,
+    fillOpacity: 0.95,
+    opacity: 1,
+  }
 }
 
 function ensureLeafletLoaded() {
@@ -97,11 +204,109 @@ function ensureLeafletLoaded() {
 }
 
 export default function Timeline() {
-  const [year, setYear] = useState(YEAR_MIN)
+  const [pointIndex, setPointIndex] = useState(BELL_POINT_INDEX)
   const [isPlaying, setIsPlaying] = useState(false)
   const [mapError, setMapError] = useState('')
+  const [mapReady, setMapReady] = useState(false)
+  const [routePathD, setRoutePathD] = useState('')
+  const [noteState, setNoteState] = useState({
+    visible: false,
+    text: '',
+    eventId: '',
+    noteX: 0,
+    noteY: 0,
+    x1: 0,
+    y1: 0,
+    x2: 0,
+    y2: 0,
+  })
+
   const mapHostRef = useRef(null)
   const mapRef = useRef(null)
+  const markersRef = useRef({})
+  const hideNoteTimerRef = useRef(null)
+  const prevActiveEventRef = useRef(null)
+
+  const currentPoint = TIME_POINTS[pointIndex]
+  const activeEventIndex = pointIndex >= SHOCKLEY_POINT_INDEX ? 1 : 0
+  const activeEvent = EVENTS[activeEventIndex]
+  const routeProgress = useMemo(() => {
+    const raw = (pointIndex - BELL_POINT_INDEX) / (SHOCKLEY_POINT_INDEX - BELL_POINT_INDEX)
+    return clamp(raw, 0, 1)
+  }, [pointIndex])
+
+  const secondDotVisible = routeProgress >= 0.999
+
+  const computeNoteGeometry = useCallback((event) => {
+    const map = mapRef.current
+    const mapEl = mapHostRef.current
+    if (!map || !mapEl) return null
+
+    const dot = map.latLngToContainerPoint([event.lat, event.lon])
+    const mapW = mapEl.clientWidth
+    const mapH = mapEl.clientHeight
+    const gap = 16
+
+    let noteX = dot.x + gap
+    let noteY = dot.y - NOTE_HEIGHT * 0.62
+
+    if (noteX + NOTE_WIDTH > mapW - 10) noteX = dot.x - NOTE_WIDTH - gap
+    noteX = Math.max(10, Math.min(noteX, mapW - NOTE_WIDTH - 10))
+    noteY = Math.max(10, Math.min(noteY, mapH - NOTE_HEIGHT - 10))
+
+    const noteOnRight = noteX > dot.x
+    const lineEndX = noteOnRight ? noteX : noteX + NOTE_WIDTH
+    const lineEndY = noteY + NOTE_HEIGHT * 0.52
+
+    return {
+      noteX,
+      noteY,
+      x1: dot.x,
+      y1: dot.y,
+      x2: lineEndX,
+      y2: lineEndY,
+    }
+  }, [])
+
+  const showTransientNote = useCallback((event) => {
+    const geometry = computeNoteGeometry(event)
+    if (!geometry) return
+
+    setNoteState({
+      visible: true,
+      text: event.shortNote,
+      eventId: event.id,
+      ...geometry,
+    })
+
+    if (hideNoteTimerRef.current) window.clearTimeout(hideNoteTimerRef.current)
+    hideNoteTimerRef.current = window.setTimeout(() => {
+      setNoteState((prev) => ({ ...prev, visible: false }))
+    }, NOTE_VISIBLE_MS)
+  }, [computeNoteGeometry])
+
+  const hideTransientNote = useCallback(() => {
+    if (hideNoteTimerRef.current) window.clearTimeout(hideNoteTimerRef.current)
+    setNoteState((prev) => ({ ...prev, visible: false }))
+  }, [])
+
+  const updateRouteGeometry = useCallback(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    const start = map.latLngToContainerPoint([EVENTS[0].lat, EVENTS[0].lon])
+    const end = map.latLngToContainerPoint([EVENTS[1].lat, EVENTS[1].lon])
+    setRoutePathD(curvePath(start, end))
+
+    setNoteState((prev) => {
+      if (!prev.visible || !prev.eventId) return prev
+      const event = EVENTS.find((item) => item.id === prev.eventId)
+      if (!event) return prev
+      const geometry = computeNoteGeometry(event)
+      if (!geometry) return prev
+      return { ...prev, ...geometry }
+    })
+  }, [computeNoteGeometry])
 
   useEffect(() => {
     let cancelled = false
@@ -110,15 +315,13 @@ export default function Timeline() {
       .then((L) => {
         if (cancelled || !mapHostRef.current) return
 
-        const start = interpolateView(YEAR_MIN)
-
         const map = L.map(mapHostRef.current, {
           zoomControl: false,
           attributionControl: true,
           worldCopyJump: true,
           minZoom: 2,
           maxZoom: 8,
-        }).setView([start.lat, start.lon], start.zoom)
+        }).setView([EVENTS[0].lat, EVENTS[0].lon], EVENTS[0].zoom)
 
         L.tileLayer(MAP_BASE_TILE, {
           attribution: MAP_ATTRIBUTION,
@@ -126,13 +329,47 @@ export default function Timeline() {
           subdomains: 'abcd',
         }).addTo(map)
 
+        const markers = {}
+
+        EVENTS.forEach((event) => {
+          const marker = L.circleMarker([event.lat, event.lon], markerStyle(event.id, activeEvent.id, secondDotVisible))
+            .addTo(map)
+            .bindPopup(event.popupHtml, {
+              minWidth: 232,
+              maxWidth: 232,
+              autoClose: true,
+              closeButton: true,
+              className: 'journey-popup',
+            })
+            .on('click', () => {
+              hideTransientNote()
+            })
+
+          markers[event.id] = marker
+        })
+
         mapRef.current = map
+        markersRef.current = markers
 
         const onResize = () => map.invalidateSize()
-        window.addEventListener('resize', onResize)
-        window.setTimeout(() => map.invalidateSize(), 120)
+        const onMapMove = () => updateRouteGeometry()
 
-        mapRef.current.__onResize = onResize
+        map.on('move zoom resize', onMapMove)
+        window.addEventListener('resize', onResize)
+        window.addEventListener('resize', onMapMove)
+        window.setTimeout(() => {
+          map.invalidateSize()
+          updateRouteGeometry()
+          showTransientNote(EVENTS[0])
+        }, 160)
+
+        map.__cleanup = () => {
+          map.off('move zoom resize', onMapMove)
+          window.removeEventListener('resize', onResize)
+          window.removeEventListener('resize', onMapMove)
+        }
+
+        setMapReady(true)
       })
       .catch(() => {
         if (cancelled) return
@@ -143,39 +380,78 @@ export default function Timeline() {
       cancelled = true
       const map = mapRef.current
       if (map) {
-        if (map.__onResize) window.removeEventListener('resize', map.__onResize)
+        if (map.__cleanup) map.__cleanup()
         map.remove()
       }
+      if (hideNoteTimerRef.current) window.clearTimeout(hideNoteTimerRef.current)
       mapRef.current = null
+      markersRef.current = {}
+      setMapReady(false)
     }
   }, [])
 
   useEffect(() => {
+    if (!mapReady) return
+
     const map = mapRef.current
     if (!map) return
 
-    const next = interpolateView(year)
-    map.flyTo([next.lat, next.lon], next.zoom, {
-      duration: isPlaying ? 0.24 : 0.55,
-      easeLinearity: 0.2,
-      animate: true,
-    })
-  }, [year, isPlaying])
+    const routeStarted = routeProgress > 0.001
+
+    if (!routeStarted) {
+      map.flyTo([EVENTS[0].lat, EVENTS[0].lon], EVENTS[0].zoom, {
+        duration: 0.75,
+        easeLinearity: 0.2,
+        animate: true,
+      })
+    } else {
+      map.fitBounds(
+        [
+          [EVENTS[0].lat, EVENTS[0].lon],
+          [EVENTS[1].lat, EVENTS[1].lon],
+        ],
+        {
+          padding: [70, 110],
+          maxZoom: 5.7,
+          animate: true,
+          duration: 0.75,
+        }
+      )
+    }
+
+    if (prevActiveEventRef.current !== activeEvent.id) {
+      prevActiveEventRef.current = activeEvent.id
+      showTransientNote(activeEvent)
+    }
+  }, [activeEvent, mapReady, routeProgress, showTransientNote])
+
+  useEffect(() => {
+    const bellMarker = markersRef.current.bell
+    const shockleyMarker = markersRef.current['shockley-hotel']
+
+    if (bellMarker) {
+      bellMarker.setStyle(markerStyle('bell', activeEvent.id, secondDotVisible))
+    }
+
+    if (shockleyMarker) {
+      shockleyMarker.setStyle(markerStyle('shockley-hotel', activeEvent.id, secondDotVisible))
+    }
+  }, [activeEvent.id, secondDotVisible])
 
   useEffect(() => {
     if (!isPlaying) return undefined
 
-    if (year >= YEAR_MAX) {
+    if (pointIndex >= LAST_POINT_INDEX) {
       setIsPlaying(false)
       return undefined
     }
 
     const timer = window.setTimeout(() => {
-      setYear((value) => Math.min(YEAR_MAX, value + 1))
+      setPointIndex((value) => Math.min(LAST_POINT_INDEX, value + 1))
     }, PLAYBACK_STEP_MS)
 
     return () => window.clearTimeout(timer)
-  }, [isPlaying, year])
+  }, [isPlaying, pointIndex])
 
   return (
     <section className="journey-section" id="timeline">
@@ -188,21 +464,62 @@ export default function Timeline() {
           <div className="journey-divider" aria-hidden="true">|</div>
 
           <div className="journey-step-right">
-            <div className="journey-map-year">{year}</div>
+            <div className="journey-map-stage">
+              <div className="journey-map-year">{currentPoint.label}</div>
 
-            <div
-              ref={mapHostRef}
-              className="journey-map-canvas"
-              role="region"
-              aria-label="World map timeline"
-            />
+              <svg className="journey-map-overlay" aria-hidden="true">
+                {routePathD && routeProgress > 0.001 && (
+                  <>
+                    <path
+                      d={routePathD}
+                      className="journey-route-progress"
+                      pathLength="1"
+                      style={{ strokeDasharray: 1, strokeDashoffset: 1 - routeProgress }}
+                    />
+                  </>
+                )}
+
+                {noteState.visible && (
+                  <line
+                    x1={noteState.x1}
+                    y1={noteState.y1}
+                    x2={noteState.x2}
+                    y2={noteState.y2}
+                    className="journey-note-link"
+                  />
+                )}
+              </svg>
+
+              {noteState.visible && (
+                <div
+                  className="journey-map-note"
+                  style={{
+                    left: `${noteState.noteX}px`,
+                    top: `${noteState.noteY}px`,
+                  }}
+                >
+                  {noteState.text}
+                </div>
+              )}
+
+              <div
+                ref={mapHostRef}
+                className="journey-map-canvas"
+                role="region"
+                aria-label="World map timeline"
+              />
+            </div>
 
             <div className="journey-slider-wrap">
               <button
                 type="button"
                 className={`journey-play-btn ${isPlaying ? 'playing' : ''}`}
                 onClick={() => {
-                  if (year >= YEAR_MAX) setYear(YEAR_MIN)
+                  if (pointIndex >= LAST_POINT_INDEX) {
+                    setPointIndex(BELL_POINT_INDEX)
+                    setIsPlaying(true)
+                    return
+                  }
                   setIsPlaying((value) => !value)
                 }}
                 aria-label={isPlaying ? 'Pause timeline playback' : 'Play timeline playback'}
@@ -213,15 +530,14 @@ export default function Timeline() {
               <input
                 type="range"
                 className="journey-year-slider"
-                min={YEAR_MIN}
-                max={YEAR_MAX}
+                min="0"
+                max={LAST_POINT_INDEX}
                 step="1"
-                value={year}
+                value={pointIndex}
                 onChange={(event) => {
-                  setIsPlaying(false)
-                  setYear(Number(event.target.value))
+                  setPointIndex(Number(event.target.value))
                 }}
-                aria-label="Year slider from 1950 to 2026"
+                aria-label="Timeline progress from 1947 to 2026"
               />
             </div>
 
