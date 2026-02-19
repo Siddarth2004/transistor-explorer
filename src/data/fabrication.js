@@ -21,7 +21,7 @@ export const fabricationFamilies = [
     blurb: 'Gate-all-around nanosheets are the current scaling frontier.'
   }
 ]
-
+// fab comm
 export const planarIntro = {
   title: 'What This Section Shows',
   text:
