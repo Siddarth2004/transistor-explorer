@@ -200,6 +200,7 @@ export default function Timeline() {
   const mapHostRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef({})
+  const svgPathRef = useRef(null)
   const hideNoteTimerRef = useRef(null)
   const curveTimerRef = useRef(null)
   const prevActiveEventRef = useRef(null)
@@ -273,7 +274,10 @@ export default function Timeline() {
 
     const start = map.latLngToContainerPoint([EVENTS[0].lat, EVENTS[0].lon])
     const end = map.latLngToContainerPoint([EVENTS[1].lat, EVENTS[1].lon])
-    setRoutePathD(curvePath(start, end))
+    const d = curvePath(start, end)
+    setRoutePathD(d)
+    // Direct DOM write — zero-lag update during zoom/pan, no React render cycle needed
+    if (svgPathRef.current) svgPathRef.current.setAttribute('d', d)
 
     setNoteState((prev) => {
       if (!prev.visible || !prev.eventId) return prev
@@ -410,9 +414,10 @@ export default function Timeline() {
 
     if (prevActiveEventRef.current !== activeEvent.id) {
       prevActiveEventRef.current = activeEvent.id
-      showTransientNote(activeEvent)
+      // Only show note once the dot is actually visible on the map
+      if (firstDotVisible) showTransientNote(activeEvent)
     }
-  }, [activeEvent, mapReady, routeActive, showTransientNote, updateRouteGeometry])
+  }, [activeEvent, firstDotVisible, mapReady, routeActive, showTransientNote, updateRouteGeometry])
 
   useEffect(() => {
     const bellMarker = markersRef.current.bell
@@ -459,6 +464,7 @@ export default function Timeline() {
               <svg className="journey-map-overlay" aria-hidden="true">
                 {routePathD && curveVisible && (
                   <path
+                    ref={svgPathRef}
                     d={routePathD}
                     fill="none"
                     className="journey-route-progress"
